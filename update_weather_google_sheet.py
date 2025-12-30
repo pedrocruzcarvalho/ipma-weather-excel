@@ -4,13 +4,15 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
-import ssl
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
+# ======================
+# CONFIG
+# ======================
 SPREADSHEET_ID = "1jZRnRVneEVqjwjWGNanOJkXyZvVTniWmqDwjzVUmwNk"
-SHEET_NAME = "Sheet1"
+SHEET_NAME = "Sheet1" 
 TIMEZONE = "Europe/Lisbon"
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -34,10 +36,11 @@ HEADERS = [
     "t_max_c",
     "wind_max_kmh",
     "wind_max_dir",
-    "wind_second_max_kmh",
-    "wind_second_max_dir",
 ]
 
+# ======================
+# GOOGLE SHEETS
+# ======================
 def get_sheets_service():
     creds_info = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(
@@ -63,9 +66,13 @@ def write_sheet(service, values):
     ).execute()
 
 
+# ======================
+# NETWORK HELPERS
+# ======================
 def _fetch_json(url, retries=3, timeout=15):
-    headers = {"User-Agent": "ipma-weather-ci/1.0"}
-    req = urllib.request.Request(url, headers=headers)
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "ipma-weather-ci/1.0"}
+    )
 
     for attempt in range(1, retries + 1):
         try:
@@ -101,13 +108,13 @@ def _geocode(name):
 
 
 def _degrees_to_compass(deg):
-    dirs = [
+    directions = [
         "N", "NNE", "NE", "ENE",
         "E", "ESE", "SE", "SSE",
         "S", "SSW", "SW", "WSW",
         "W", "WNW", "NW", "NNW",
     ]
-    return dirs[int((deg + 11.25) / 22.5) % 16]
+    return directions[int((deg + 11.25) / 22.5) % 16]
 
 
 def _forecast_today(lat, lon):
@@ -130,26 +137,26 @@ def _forecast_today(lat, lon):
     directions = hourly["winddirection_10m"]
 
     max_speed = max(speeds)
-    max_dirs = [
-        _degrees_to_compass(d)
-        for s, d in zip(speeds, directions)
-        if s == max_speed
-    ]
 
-    unique_dirs = []
-    for d in max_dirs:
-        if d not in unique_dirs:
-            unique_dirs.append(d)
+    max_dirs = []
+    for speed, deg in zip(speeds, directions):
+        if speed == max_speed:
+            compass = _degrees_to_compass(deg)
+            if compass not in max_dirs:
+                max_dirs.append(compass)
 
     return {
         "date": daily["time"][0],
         "t_min_c": round(daily["temperature_2m_min"][0], 1),
         "t_max_c": round(daily["temperature_2m_max"][0], 1),
         "wind_max_kmh": round(max_speed, 1),
-        "wind_max_dir": ",".join(unique_dirs),
+        "wind_max_dir": ",".join(max_dirs),
     }
 
 
+# ======================
+# MAIN
+# ======================
 def main():
     service = get_sheets_service()
 
@@ -174,8 +181,6 @@ def main():
                 forecast["t_max_c"],
                 forecast["wind_max_kmh"],
                 forecast["wind_max_dir"],
-                "",
-                "",
             ])
 
             time.sleep(0.5)
