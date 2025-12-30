@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 # CONFIG
 # ======================
 SPREADSHEET_ID = "1jZRnRVneEVqjwjWGNanOJkXyZvVTniWmqDwjzVUmwNk"
-SHEET_NAME = "Sheet1" 
+SHEET_NAME = "Sheet1"  
 TIMEZONE = "Europe/Lisbon"
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -36,6 +36,7 @@ HEADERS = [
     "t_max_c",
     "wind_max_kmh",
     "wind_max_dir",
+    "wind_second_max_dir",
 ]
 
 # ======================
@@ -133,17 +134,30 @@ def _forecast_today(lat, lon):
     daily = data["daily"]
     hourly = data["hourly"]
 
+    # hourly lists
     speeds = hourly["windspeed_10m"]
     directions = hourly["winddirection_10m"]
 
+    # find max speed
     max_speed = max(speeds)
-
     max_dirs = []
-    for speed, deg in zip(speeds, directions):
-        if speed == max_speed:
-            compass = _degrees_to_compass(deg)
+    for s, d in zip(speeds, directions):
+        if s == max_speed:
+            compass = _degrees_to_compass(d)
             if compass not in max_dirs:
                 max_dirs.append(compass)
+
+    # find second highest speed
+    unique_speeds = sorted(set(speeds), reverse=True)
+    second_speed = unique_speeds[1] if len(unique_speeds) > 1 else None
+
+    second_dirs = []
+    if second_speed is not None:
+        for s, d in zip(speeds, directions):
+            if s == second_speed:
+                compass = _degrees_to_compass(d)
+                if compass not in second_dirs:
+                    second_dirs.append(compass)
 
     return {
         "date": daily["time"][0],
@@ -151,6 +165,7 @@ def _forecast_today(lat, lon):
         "t_max_c": round(daily["temperature_2m_max"][0], 1),
         "wind_max_kmh": round(max_speed, 1),
         "wind_max_dir": ",".join(max_dirs),
+        "wind_second_max_dir": ",".join(second_dirs),
     }
 
 
@@ -181,6 +196,7 @@ def main():
                 forecast["t_max_c"],
                 forecast["wind_max_kmh"],
                 forecast["wind_max_dir"],
+                forecast["wind_second_max_dir"],
             ])
 
             time.sleep(0.5)
