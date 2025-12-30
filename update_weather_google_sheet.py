@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 # CONFIG
 # ======================
 SPREADSHEET_ID = "1jZRnRVneEVqjwjWGNanOJkXyZvVTniWmqDwjzVUmwNk"
-SHEET_NAME = "Sheet1"  
+SHEET_NAME = "Folha1"  # must match the tab name exactly
 TIMEZONE = "Europe/Lisbon"
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -36,6 +36,7 @@ HEADERS = [
     "t_max_c",
     "wind_max_kmh",
     "wind_max_dir",
+    "wind_second_max_kmh",
     "wind_second_max_dir",
 ]
 
@@ -74,7 +75,6 @@ def _fetch_json(url, retries=3, timeout=15):
     req = urllib.request.Request(
         url, headers={"User-Agent": "ipma-weather-ci/1.0"}
     )
-
     for attempt in range(1, retries + 1):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -134,11 +134,10 @@ def _forecast_today(lat, lon):
     daily = data["daily"]
     hourly = data["hourly"]
 
-    # hourly lists
     speeds = hourly["windspeed_10m"]
     directions = hourly["winddirection_10m"]
 
-    # find max speed
+    # max wind
     max_speed = max(speeds)
     max_dirs = []
     for s, d in zip(speeds, directions):
@@ -147,7 +146,7 @@ def _forecast_today(lat, lon):
             if compass not in max_dirs:
                 max_dirs.append(compass)
 
-    # find second highest speed
+    # second highest wind
     unique_speeds = sorted(set(speeds), reverse=True)
     second_speed = unique_speeds[1] if len(unique_speeds) > 1 else None
 
@@ -165,6 +164,7 @@ def _forecast_today(lat, lon):
         "t_max_c": round(daily["temperature_2m_max"][0], 1),
         "wind_max_kmh": round(max_speed, 1),
         "wind_max_dir": ",".join(max_dirs),
+        "wind_second_max_kmh": round(second_speed, 1) if second_speed is not None else "",
         "wind_second_max_dir": ",".join(second_dirs),
     }
 
@@ -174,7 +174,6 @@ def _forecast_today(lat, lon):
 # ======================
 def main():
     service = get_sheets_service()
-
     values = [HEADERS]
 
     for concelho in CONCELHOS:
@@ -196,6 +195,7 @@ def main():
                 forecast["t_max_c"],
                 forecast["wind_max_kmh"],
                 forecast["wind_max_dir"],
+                forecast["wind_second_max_kmh"],
                 forecast["wind_second_max_dir"],
             ])
 
