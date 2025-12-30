@@ -4,13 +4,11 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
+import ssl
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# ======================
-# CONFIG
-# ======================
 SPREADSHEET_ID = "1jZRnRVneEVqjwjWGNanOJkXyZvVTniWmqDwjzVUmwNk"
 SHEET_NAME = "Sheet1"
 TIMEZONE = "Europe/Lisbon"
@@ -40,9 +38,6 @@ HEADERS = [
     "wind_second_max_dir",
 ]
 
-# ======================
-# GOOGLE SHEETS
-# ======================
 def get_sheets_service():
     creds_info = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(
@@ -55,13 +50,11 @@ def get_sheets_service():
 def write_sheet(service, values):
     sheet = service.spreadsheets()
 
-    # Clear existing content
     sheet.values().clear(
         spreadsheetId=SPREADSHEET_ID,
         range=SHEET_NAME,
     ).execute()
 
-    # Write new content
     sheet.values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=SHEET_NAME,
@@ -70,23 +63,27 @@ def write_sheet(service, values):
     ).execute()
 
 
-# ======================
-# WEATHER HELPERS
-# ======================
+def _fetch_json(url, retries=3, timeout=15):
+    headers = {"User-Agent": "ipma-weather-ci/1.0"}
+    req = urllib.request.Request(url, headers=headers)
+
+    for attempt in range(1, retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.load(r)
+        except Exception as exc:
+            if attempt == retries:
+                raise
+            print(f"⚠️ Network error, retry {attempt}/{retries}: {exc}")
+            time.sleep(2)
+
+
 def _normalize(text):
     return "".join(
         ch
         for ch in unicodedata.normalize("NFKD", text)
         if not unicodedata.combining(ch)
     ).lower()
-
-
-def _fetch_json(url):
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "ipma-weather/1.0"}
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)
 
 
 def _geocode(name):
@@ -153,39 +150,41 @@ def _forecast_today(lat, lon):
     }
 
 
-# ======================
-# MAIN
-# ======================
 def main():
     service = get_sheets_service()
 
     values = [HEADERS]
 
     for concelho in CONCELHOS:
-        geo = _geocode(concelho)
-        if not geo:
-            continue
+        try:
+            geo = _geocode(concelho)
+            if not geo:
+                print(f"❌ Geocode failed for {concelho}")
+                continue
 
-        forecast = _forecast_today(
-            geo["latitude"],
-            geo["longitude"],
-        )
+            forecast = _forecast_today(
+                geo["latitude"],
+                geo["longitude"],
+            )
 
-        values.append([
-            forecast["date"],
-            geo["name"],
-            forecast["t_min_c"],
-            forecast["t_max_c"],
-            forecast["wind_max_kmh"],
-            forecast["wind_max_dir"],
-            "",
-            "",
-        ])
+            values.append([
+                forecast["date"],
+                geo["name"],
+                forecast["t_min_c"],
+                forecast["t_max_c"],
+                forecast["wind_max_kmh"],
+                forecast["wind_max_dir"],
+                "",
+                "",
+            ])
 
-        time.sleep(0.2)
+            time.sleep(0.5)
+
+        except Exception as exc:
+            print(f"❌ Error processing {concelho}: {exc}")
 
     write_sheet(service, values)
-    print("Google Sheet updated successfully")
+    print("✅ Google Sheet updated successfully")
 
 
 if __name__ == "__main__":
