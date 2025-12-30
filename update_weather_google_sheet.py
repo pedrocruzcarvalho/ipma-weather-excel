@@ -12,7 +12,7 @@ from googleapiclient.discovery import build
 # CONFIG
 # ======================
 SPREADSHEET_ID = "1jZRnRVneEVqjwjWGNanOJkXyZvVTniWmqDwjzVUmwNk"
-SHEET_NAME = "Folha1"  # must match the tab name exactly
+SHEET_NAME = "Sheet1" 
 TIMEZONE = "Europe/Lisbon"
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
