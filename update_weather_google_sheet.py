@@ -1,7 +1,6 @@
 import json
 import os
 import time
-import unicodedata
 import urllib.parse
 import urllib.request
 
@@ -15,19 +14,19 @@ SPREADSHEET_ID = "1jZRnRVneEVqjwjWGNanOJkXyZvVTniWmqDwjzVUmwNk"
 SHEET_NAME = "Sheet1"
 TIMEZONE = "Europe/Lisbon"
 
-GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
-CONCELHOS = [
-    "Sobral de Monte Agraco",
-    "Torres Vedras",
-    "Lourinha",
-    "Caldas da Rainha",
-    "Cadaval",
-    "Bombarral",
-    "Peniche",
-    "Obidos",
-]
+# FIXED, VERIFIED COORDINATES (MAINLAND PORTUGAL)
+CONCELHOS = {
+    "Sobral de Monte Agraço": (39.019, -9.150),
+    "Torres Vedras": (39.091, -9.258),
+    "Lourinhã": (39.243, -9.312),
+    "Caldas da Rainha": (39.403, -9.138),
+    "Cadaval": (39.244, -9.106),
+    "Bombarral": (39.267, -9.157),
+    "Peniche": (39.355, -9.381),
+    "Óbidos": (39.360, -9.157),
+}
 
 HEADERS = [
     "date",
@@ -44,20 +43,19 @@ HEADERS = [
 # GOOGLE SHEETS
 # ======================
 def get_sheets_service():
-    creds_info = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(
-        creds_info,
+        json.loads(os.environ["GOOGLE_CREDENTIALS"]),
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     return build("sheets", "v4", credentials=creds)
 
 
 def read_sheet(service):
-    result = service.spreadsheets().values().get(
+    res = service.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
         range=SHEET_NAME,
     ).execute()
-    return result.get("values", [])
+    return res.get("values", [])
 
 
 def write_sheet(service, values):
@@ -75,56 +73,18 @@ def write_sheet(service, values):
 
 
 # ======================
-# HELPERS
+# WEATHER HELPERS
 # ======================
-def _normalize(text):
-    return "".join(
-        c for c in unicodedata.normalize("NFKD", text)
-        if not unicodedata.combining(c)
-    ).lower()
-
-
-def _fetch_json(url, retries=3, timeout=15):
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "ipma-weather-ci/1.0"}
-    )
+def _fetch_json(url, retries=3):
+    req = urllib.request.Request(url, headers={"User-Agent": "ipma-weather/1.0"})
     for i in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=15) as r:
                 return json.load(r)
         except Exception:
             if i == retries - 1:
                 raise
             time.sleep(2)
-
-
-def _geocode(name):
-    params = {
-        "name": name,
-        "count": 10,
-        "language": "pt",
-        "format": "json",
-        "country": "PT",
-    }
-    url = f"{GEOCODE_URL}?{urllib.parse.urlencode(params)}"
-    data = _fetch_json(url)
-    results = data.get("results") or []
-
-    target = _normalize(name)
-
-    def score(item):
-        score = 0
-        if _normalize(item.get("name", "")) == target:
-            score += 3
-        if item.get("country_code") == "PT":
-            score += 2
-        elevation = item.get("elevation")
-        if elevation is not None:
-            score += max(0, 100 - abs(elevation))
-        return score
-
-    results.sort(key=score, reverse=True)
-    return results[0] if results else None
 
 
 def _degrees_to_compass(deg):
@@ -155,14 +115,19 @@ def _forecast_today(lat, lon):
     directions = hourly["winddirection_10m"]
 
     max_speed = max(speeds)
-    max_dirs = {_degrees_to_compass(d) for s, d in zip(speeds, directions) if s == max_speed}
+    max_dirs = {
+        _degrees_to_compass(d)
+        for s, d in zip(speeds, directions)
+        if s == max_speed
+    }
 
     unique_speeds = sorted(set(speeds), reverse=True)
     second_speed = unique_speeds[1] if len(unique_speeds) > 1 else None
-    second_dirs = (
-        {_degrees_to_compass(d) for s, d in zip(speeds, directions) if s == second_speed}
-        if second_speed else set()
-    )
+    second_dirs = {
+        _degrees_to_compass(d)
+        for s, d in zip(speeds, directions)
+        if second_speed and s == second_speed
+    }
 
     return {
         "date": daily["time"][0],
@@ -180,22 +145,18 @@ def _forecast_today(lat, lon):
 # ======================
 def main():
     service = get_sheets_service()
-    existing = read_sheet(service)
-
-    if not existing:
-        existing = [HEADERS]
+    existing = read_sheet(service) or [HEADERS]
 
     today_rows = []
     run_date = None
 
-    for concelho in CONCELHOS:
-        geo = _geocode(concelho)
-        forecast = _forecast_today(geo["latitude"], geo["longitude"])
+    for name, (lat, lon) in CONCELHOS.items():
+        forecast = _forecast_today(lat, lon)
         run_date = forecast["date"]
 
         today_rows.append([
             forecast["date"],
-            geo["name"],
+            name,
             forecast["t_min_c"],
             forecast["t_max_c"],
             forecast["wind_max_kmh"],
@@ -204,7 +165,7 @@ def main():
             forecast["wind_second_max_dir"],
         ])
 
-    # remove existing block for today
+    # remove today's existing block
     new_sheet = [HEADERS]
     skip = False
     for row in existing[1:]:
@@ -216,13 +177,12 @@ def main():
         if not skip:
             new_sheet.append(row)
 
-    # append empty line + today
     if len(new_sheet) > 1:
         new_sheet.append([""] * len(HEADERS))
     new_sheet.extend(today_rows)
 
     write_sheet(service, new_sheet)
-    print("✅ Appended new day correctly")
+    print("✅ Data appended with correct locations")
 
 
 if __name__ == "__main__":
